@@ -42,6 +42,10 @@ export interface ChartDataPoint {
   predictedFuture: number | null;
   confidenceHigh: number | null;
   confidenceLow: number | null;
+  comparisonPredicted: number | null;
+  comparisonPredictedPast: number | null;
+  comparisonPredictedFuture: number | null;
+  comparisonOutlier: boolean;
   isOutlier: boolean;
   isFuture: boolean;
   temperature: number | null;
@@ -62,6 +66,11 @@ export interface SelectedPoint {
   temperature: number | null;
   isOutlier: boolean;
   deviationPercent: number | null;
+  // Comparison-specific fields
+  isComparisonPoint?: boolean;
+  comparisonPredicted?: number | null;
+  comparisonDeviationPercent?: number | null;
+  daysDifference?: number | null;
 }
 
 export interface FilterState {

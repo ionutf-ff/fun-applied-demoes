@@ -1,4 +1,5 @@
 import { formatMWh, formatDateFull, formatPercent, formatTemperature } from '@/lib/formatters';
+import { CHART_COLORS } from '@/constants';
 import type { ChartDataPoint } from '@/types';
 
 interface ChartTooltipProps {
@@ -8,18 +9,25 @@ interface ChartTooltipProps {
   showTemp?: boolean;
   showHumidity?: boolean;
   showWind?: boolean;
+  hasComparison?: boolean;
 }
 
-export function ChartTooltip({ active, payload, onAnalyzeClick, showTemp, showHumidity, showWind }: ChartTooltipProps) {
+export function ChartTooltip({ active, payload, onAnalyzeClick, showTemp, showHumidity, showWind, hasComparison }: ChartTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
 
   const data = payload[0].payload;
   const hasActual = data.actual !== null;
   const hasPredicted = data.predicted !== null;
+  const hasComp = hasComparison && data.comparisonPredicted !== null;
 
   let deviation: number | null = null;
   if (hasActual && hasPredicted) {
     deviation = ((data.actual! - data.predicted!) / data.predicted!) * 100;
+  }
+
+  let compDeviation: number | null = null;
+  if (hasComp && hasPredicted) {
+    compDeviation = ((data.comparisonPredicted! - data.predicted!) / data.predicted!) * 100;
   }
 
   return (
@@ -37,6 +45,12 @@ export function ChartTooltip({ active, payload, onAnalyzeClick, showTemp, showHu
           <div className="flex justify-between text-xs">
             <span className="text-dashboard-predict">Predicted:</span>
             <span className="text-white font-medium">{formatMWh(data.predicted!)}</span>
+          </div>
+        )}
+        {hasComp && (
+          <div className="flex justify-between text-xs">
+            <span style={{ color: CHART_COLORS.comparisonLine }}>Comparison:</span>
+            <span className="text-white font-medium">{formatMWh(data.comparisonPredicted!)}</span>
           </div>
         )}
         {showTemp && data.temperature !== null && (
@@ -62,6 +76,14 @@ export function ChartTooltip({ active, payload, onAnalyzeClick, showTemp, showHu
             <span className="text-dashboard-muted">Error:</span>
             <span className={`font-medium ${data.isOutlier ? 'text-dashboard-error' : 'text-dashboard-accent'}`}>
               {formatPercent(deviation)}
+            </span>
+          </div>
+        )}
+        {compDeviation !== null && (
+          <div className="flex justify-between text-xs">
+            <span className="text-dashboard-muted">Comp. Diff:</span>
+            <span className={`font-medium ${data.comparisonOutlier ? 'text-dashboard-error' : 'text-dashboard-accent'}`}>
+              {formatPercent(compDeviation)}
             </span>
           </div>
         )}

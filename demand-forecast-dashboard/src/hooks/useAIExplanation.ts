@@ -7,7 +7,9 @@ export function useAIExplanation() {
   const [loading, setLoading] = useState(false);
 
   const explain = useCallback(async (point: SelectedPoint, state: string) => {
-    if (point.actual === null || point.predicted === null) return;
+    // For comparison points, we need predicted; for primary points we need actual + predicted
+    if (!point.isComparisonPoint && (point.actual === null || point.predicted === null)) return;
+    if (point.isComparisonPoint && point.predicted === null) return;
 
     setExplanation('');
     setLoading(true);
@@ -16,10 +18,13 @@ export function useAIExplanation() {
       await fetchExplanation(
         {
           date: point.date,
-          actual: point.actual,
-          predicted: point.predicted,
+          actual: point.actual ?? 0,
+          predicted: point.predicted!,
           state,
           temperature: point.temperature,
+          isComparisonPoint: point.isComparisonPoint,
+          comparisonPredicted: point.comparisonPredicted,
+          daysDifference: point.daysDifference,
         },
         (chunk) => {
           setExplanation((prev) => prev + chunk);

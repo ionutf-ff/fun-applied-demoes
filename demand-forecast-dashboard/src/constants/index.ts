@@ -20,6 +20,8 @@ export const CHART_COLORS = {
   confidenceBand: '#6B7280',
   outlier: '#EF4444',
   todayLine: '#FBBF24',
+  comparison: '#FB923C',
+  comparisonLine: '#FB923C',
   grid: '#1F2937',
   axis: '#6B7280',
 } as const;

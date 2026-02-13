@@ -20,6 +20,9 @@ export async function fetchExplanation(
     predicted: number;
     state: string;
     temperature: number | null;
+    isComparisonPoint?: boolean;
+    comparisonPredicted?: number | null;
+    daysDifference?: number | null;
   },
   onChunk: (text: string) => void
 ): Promise<void> {

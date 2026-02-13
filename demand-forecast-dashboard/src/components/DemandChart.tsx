@@ -9,7 +9,7 @@ import {
   ReferenceLine,
   ResponsiveContainer,
 } from 'recharts';
-import { Thermometer, Droplets, Wind } from 'lucide-react';
+import { Thermometer, Droplets, Wind, Calendar } from 'lucide-react';
 import { CHART_COLORS } from '@/constants';
 import { formatMWhShort, formatDate } from '@/lib/formatters';
 import { ChartTooltip } from './ChartTooltip';
@@ -17,7 +17,7 @@ import { ChartLegend } from './ChartLegend';
 import { ErrorMetrics } from './ErrorMetrics';
 import type { ChartDataPoint, SelectedPoint } from '@/types';
 
-const TODAY = '2026-02-13';
+const REAL_TODAY = '2026-02-13';
 
 const WEATHER_COLORS = {
   temperature: '#F97316',
@@ -28,6 +28,12 @@ const WEATHER_COLORS = {
 interface DemandChartProps {
   data: ChartDataPoint[];
   metrics: { rmse: number; mae: number; maxError: number; overallErrorRate: number };
+  yDomain: [number, number];
+  primaryDate: string;
+  comparisonDate: string | null;
+  startDate: string;
+  endDate: string;
+  onPrimaryDateChange: (date: string) => void;
   onPointClick: (point: SelectedPoint) => void;
 }
 
@@ -72,6 +78,60 @@ function PredictedDot(props: any) {
   );
 }
 
+function toComparisonSelectedPoint(point: ChartDataPoint, primaryDate: string, comparisonDate: string): SelectedPoint {
+  const primaryMs = new Date(primaryDate + 'T00:00:00').getTime();
+  const compMs = new Date(comparisonDate + 'T00:00:00').getTime();
+  const daysDiff = Math.round(Math.abs(primaryMs - compMs) / (1000 * 60 * 60 * 24));
+
+  let deviationPercent: number | null = null;
+  if (point.comparisonPredicted !== null && point.predicted !== null) {
+    deviationPercent = ((point.comparisonPredicted - point.predicted) / point.predicted) * 100;
+  }
+
+  return {
+    date: point.date,
+    actual: point.actual,
+    predicted: point.predicted,
+    temperature: point.temperature,
+    isOutlier: point.comparisonOutlier,
+    deviationPercent: point.actual !== null && point.predicted !== null
+      ? ((point.actual - point.predicted) / point.predicted) * 100
+      : null,
+    isComparisonPoint: true,
+    comparisonPredicted: point.comparisonPredicted,
+    comparisonDeviationPercent: deviationPercent,
+    daysDifference: daysDiff,
+  };
+}
+
+function ComparisonDot(props: any) {
+  const { cx, cy, payload, onPointClick, primaryDate, comparisonDate } = props;
+  if (!cx || !cy || !payload) return null;
+  const compValue = payload.comparisonPredictedPast ?? payload.comparisonPredictedFuture;
+  if (compValue === null || compValue === undefined) return null;
+
+  const isOutlier = payload.comparisonOutlier;
+  const fill = isOutlier ? CHART_COLORS.outlier : CHART_COLORS.comparisonLine;
+
+  return (
+    <g
+      onClick={(e) => {
+        e.stopPropagation();
+        if (onPointClick) {
+          onPointClick(toComparisonSelectedPoint(payload, primaryDate, comparisonDate));
+        }
+      }}
+      style={{ cursor: 'pointer' }}
+    >
+      <circle cx={cx} cy={cy} r={12} fill="transparent" />
+      {isOutlier && (
+        <circle cx={cx} cy={cy} r={7} fill={CHART_COLORS.outlier} opacity={0.2} />
+      )}
+      <circle cx={cx} cy={cy} r={3.5} fill={fill} stroke="#0F1117" strokeWidth={1.5} />
+    </g>
+  );
+}
+
 interface WeatherToggleProps {
   checked: boolean;
   onChange: (v: boolean) => void;
@@ -110,15 +170,28 @@ function WeatherToggle({ checked, onChange, icon, label, color }: WeatherToggleP
   );
 }
 
-export function DemandChart({ data, metrics, onPointClick }: DemandChartProps) {
+export function DemandChart({
+  data,
+  metrics,
+  yDomain,
+  primaryDate,
+  comparisonDate,
+  startDate,
+  endDate,
+  onPrimaryDateChange,
+  onPointClick,
+}: DemandChartProps) {
   const [showTemp, setShowTemp] = useState(false);
   const [showHumidity, setShowHumidity] = useState(false);
   const [showWind, setShowWind] = useState(false);
 
   const anyWeather = showTemp || showHumidity || showWind;
 
-  const hasToday = data.some((d) => d.date === TODAY);
+  const hasPrimaryDate = data.some((d) => d.date === primaryDate);
+  const hasComparisonDate = comparisonDate && data.some((d) => d.date === comparisonDate);
+  const hasTodayDate = data.some((d) => d.date === REAL_TODAY) && primaryDate !== REAL_TODAY;
   const hasFuture = data.some((d) => d.isFuture);
+  const hasComparison = data.some((d) => d.comparisonPredicted !== null);
 
   const handleTooltipAnalyze = useCallback(
     (chartPoint: ChartDataPoint) => {
@@ -130,16 +203,30 @@ export function DemandChart({ data, metrics, onPointClick }: DemandChartProps) {
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center h-[500px] text-dashboard-muted">
-        No data available. Select filters and click Update.
+        No data available. Select filters to view data.
       </div>
     );
   }
 
   return (
     <div className="bg-dashboard-card rounded-xl border border-dashboard-border p-6">
-      {/* Header: title (left) | metrics + checkboxes (right) */}
+      {/* Header: title + date picker (left) | metrics + checkboxes (right) */}
       <div className="flex items-center justify-between" style={{ margin: '0.25rem 0.75rem 1rem 0.75rem' }}>
-        <h2 className="text-lg font-semibold text-white">Forecast vs Actual Demand</h2>
+        <div className="flex items-center gap-4">
+          <h2 className="text-lg font-semibold text-white">Forecast vs Actual Demand</h2>
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-dashboard-muted" />
+            <span className="text-xs text-dashboard-muted uppercase tracking-wider font-medium">Forecast Date</span>
+            <input
+              type="date"
+              value={primaryDate}
+              min={startDate}
+              max={endDate}
+              onChange={(e) => onPrimaryDateChange(e.target.value)}
+              className="px-2.5 py-1.5 bg-dashboard-surface border border-dashboard-border rounded-lg text-xs text-white focus:outline-none focus:border-dashboard-accent transition-colors"
+            />
+          </div>
+        </div>
         <div className="flex items-center gap-4">
           <ErrorMetrics
             rmse={metrics.rmse}
@@ -192,7 +279,7 @@ export function DemandChart({ data, metrics, onPointClick }: DemandChartProps) {
             tickLine={false}
             axisLine={false}
             width={60}
-            domain={['auto', 'auto']}
+            domain={yDomain}
             padding={{ top: 20, bottom: 20 }}
           />
 
@@ -210,9 +297,19 @@ export function DemandChart({ data, metrics, onPointClick }: DemandChartProps) {
             />
           )}
 
-          {/* Confidence bands */}
+          {/* Confidence bands (primary forecast only) */}
           <Line yAxisId="demand" dataKey="confidenceHigh" stroke={CHART_COLORS.confidenceBand} strokeDasharray="4 4" strokeWidth={1} dot={false} activeDot={false} name="+10% Band" connectNulls={false} />
           <Line yAxisId="demand" dataKey="confidenceLow" stroke={CHART_COLORS.confidenceBand} strokeDasharray="4 4" strokeWidth={1} dot={false} activeDot={false} name="-10% Band" connectNulls={false} />
+
+          {/* Comparison forecast line - past (solid) */}
+          {hasComparison && (
+            <Line yAxisId="demand" dataKey="comparisonPredictedPast" stroke={CHART_COLORS.comparisonLine} strokeWidth={2} dot={<ComparisonDot onPointClick={onPointClick} primaryDate={primaryDate} comparisonDate={comparisonDate} />} activeDot={false} name="Comparison (Past)" connectNulls={false} />
+          )}
+
+          {/* Comparison forecast line - future (dashed) */}
+          {hasComparison && hasFuture && (
+            <Line yAxisId="demand" dataKey="comparisonPredictedFuture" stroke={CHART_COLORS.comparisonLine} strokeWidth={2} strokeDasharray="6 4" dot={<ComparisonDot onPointClick={onPointClick} primaryDate={primaryDate} comparisonDate={comparisonDate} />} activeDot={false} name="Comparison (Future)" connectNulls={false} />
+          )}
 
           {/* Predicted demand - past (solid) */}
           <Line yAxisId="demand" dataKey="predictedPast" stroke={CHART_COLORS.predicted} strokeWidth={2.5} dot={<PredictedDot onPointClick={onPointClick} />} activeDot={false} name="Predicted (Past)" connectNulls={false} />
@@ -252,16 +349,16 @@ export function DemandChart({ data, metrics, onPointClick }: DemandChartProps) {
             <Line yAxisId="weather" dataKey="windSpeedFuture" stroke={WEATHER_COLORS.windSpeed} strokeWidth={1.5} strokeDasharray="4 3" dot={{ r: 2, fill: WEATHER_COLORS.windSpeed, stroke: '#0F1117', strokeWidth: 1 }} activeDot={{ r: 4, fill: WEATHER_COLORS.windSpeed }} name="Wind Speed (Forecast)" connectNulls={false} />
           )}
 
-          {/* Today reference line */}
-          {hasToday && (
+          {/* Primary date reference line */}
+          {hasPrimaryDate && (
             <ReferenceLine
               yAxisId="demand"
-              x={TODAY}
+              x={primaryDate}
               stroke={CHART_COLORS.todayLine}
               strokeDasharray="4 4"
               strokeWidth={1.5}
               label={{
-                value: 'Today',
+                value: 'Forecast',
                 position: 'insideTopRight',
                 fill: CHART_COLORS.todayLine,
                 fontSize: 11,
@@ -271,14 +368,52 @@ export function DemandChart({ data, metrics, onPointClick }: DemandChartProps) {
             />
           )}
 
+          {/* Comparison date reference line */}
+          {hasComparisonDate && (
+            <ReferenceLine
+              yAxisId="demand"
+              x={comparisonDate!}
+              stroke={CHART_COLORS.comparisonLine}
+              strokeDasharray="4 4"
+              strokeWidth={1.5}
+              label={{
+                value: 'Comparison',
+                position: 'insideTopLeft',
+                fill: CHART_COLORS.comparisonLine,
+                fontSize: 11,
+                fontWeight: 600,
+                dy: 8,
+              }}
+            />
+          )}
+
+          {/* Today reference line */}
+          {hasTodayDate && (
+            <ReferenceLine
+              yAxisId="demand"
+              x={REAL_TODAY}
+              stroke="#10B981"
+              strokeDasharray="3 3"
+              strokeWidth={1}
+              label={{
+                value: 'Today',
+                position: 'insideTopRight',
+                fill: '#10B981',
+                fontSize: 10,
+                fontWeight: 600,
+                dy: 22,
+              }}
+            />
+          )}
+
           <Tooltip
-            content={<ChartTooltip onAnalyzeClick={handleTooltipAnalyze} showTemp={showTemp} showHumidity={showHumidity} showWind={showWind} />}
+            content={<ChartTooltip onAnalyzeClick={handleTooltipAnalyze} showTemp={showTemp} showHumidity={showHumidity} showWind={showWind} hasComparison={hasComparison} />}
             cursor={{ stroke: CHART_COLORS.axis, strokeDasharray: '3 3' }}
           />
         </ComposedChart>
       </ResponsiveContainer>
 
-      <ChartLegend showTemp={showTemp} showHumidity={showHumidity} showWind={showWind} />
+      <ChartLegend showTemp={showTemp} showHumidity={showHumidity} showWind={showWind} showComparison={hasComparison} showToday={hasTodayDate} />
     </div>
   );
 }
