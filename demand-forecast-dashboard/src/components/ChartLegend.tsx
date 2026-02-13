@@ -4,16 +4,20 @@ interface ChartLegendProps {
   showTemp?: boolean;
   showHumidity?: boolean;
   showWind?: boolean;
+  showComparison?: boolean;
+  showToday?: boolean;
 }
 
-export function ChartLegend({ showTemp, showHumidity, showWind }: ChartLegendProps) {
+export function ChartLegend({ showTemp, showHumidity, showWind, showComparison, showToday }: ChartLegendProps) {
   return (
     <div className="flex items-center justify-center gap-6 mt-4">
       <LegendItem color={CHART_COLORS.actual} label="Actual Demand" />
       <LegendItem color={CHART_COLORS.predicted} label="Predicted Demand" dot />
       <LegendItem color={CHART_COLORS.confidenceBand} label="±10% Band" dashed />
       <LegendItem color={CHART_COLORS.outlier} label="Outlier (>10%)" dot />
-      <LegendItem color={CHART_COLORS.todayLine} label="Today" dashed />
+      <LegendItem color={CHART_COLORS.todayLine} label="Forecast Date" dashed />
+      {showToday && <LegendItem color="#10B981" label="Today" dashed />}
+      {showComparison && <LegendItem color={CHART_COLORS.comparisonLine} label="Comparison" dot />}
       {showTemp && <LegendItem color="#F97316" label="Temperature" dashed />}
       {showHumidity && <LegendItem color="#38BDF8" label="Humidity" dashed />}
       {showWind && <LegendItem color="#A78BFA" label="Wind Speed" dashed />}

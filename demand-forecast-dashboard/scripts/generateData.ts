@@ -42,6 +42,9 @@ const regions: RegionConfig[] = [
     amplitude: 3000,
     baseTemp: 58,
     tempAmplitude: 8,
+    coldSnapDay: undefined,
+    coldSnapDuration: undefined,
+    coldSnapTempDrop: undefined,
     energyMix: [0.35, 0.08, 0.32, 0.25],
   },
   {
@@ -182,39 +185,47 @@ for (const config of regions) {
     }
   }
 
-  // Forecasted demand: each day has a prediction made for it — split by energy source
-  for (let d = 0; d <= totalDays; d++) {
-    const predictedDate = addDays(startDate, d);
-    // Prediction was made 1 day before (or 7 days before for future)
-    const predictionLead = d > historicalDays ? Math.min(d - historicalDays, 14) : 1;
-    const dateOfPrediction = formatDate(addDays(predictedDate, -predictionLead));
+  // Forecasted demand: each date produces a full forecast run for all dates from that date forward.
+  // This enables the timeline slider to show the forecast perspective from any given date.
+  // Forecast accuracy degrades with lead time (days ahead).
+  const forecastRand = seededRandom(config.region.charCodeAt(0) * 7777 + config.region.charCodeAt(1) * 13);
 
-    // Forecast = base demand pattern WITHOUT cold snap effects + small random error
-    const dayOfWeek = predictedDate.getDay();
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  for (let predDay = 0; predDay <= totalDays; predDay++) {
+    const dateOfPrediction = formatDate(addDays(startDate, predDay));
 
-    let forecastDemand = config.baseLoad;
-    forecastDemand += isWeekend ? -config.amplitude * 0.4 : config.amplitude * 0.3;
+    for (let targetDay = predDay; targetDay <= totalDays; targetDay++) {
+      const predictedDate = addDays(startDate, targetDay);
+      const leadTime = targetDay - predDay; // days ahead
 
-    // Forecast uses predicted temperature (doesn't know about cold snap)
-    const expectedTemp = config.baseTemp + config.tempAmplitude * Math.sin((d / 28) * Math.PI * 2);
-    if (expectedTemp < 40) {
-      forecastDemand += (40 - expectedTemp) * 120;
-    } else if (expectedTemp > 75) {
-      forecastDemand += (expectedTemp - 75) * 100;
-    }
+      const dayOfWeek = predictedDate.getDay();
+      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
-    // Small forecast error
-    forecastDemand += (rand() - 0.5) * config.amplitude * 0.3;
+      // Base forecast demand (doesn't know about cold snaps)
+      let forecastDemand = config.baseLoad;
+      forecastDemand += isWeekend ? -config.amplitude * 0.4 : config.amplitude * 0.3;
 
-    for (let s = 0; s < ENERGY_SOURCES.length; s++) {
-      const basePercent = config.energyMix[s];
-      const noise = (rand() - 0.5) * 0.03;
-      const sourceForecast = Math.round(forecastDemand * (basePercent + noise));
+      // Forecast uses predicted temperature (no cold snap knowledge)
+      const expectedTemp = config.baseTemp + config.tempAmplitude * Math.sin((targetDay / 28) * Math.PI * 2);
+      if (expectedTemp < 40) {
+        forecastDemand += (40 - expectedTemp) * 120;
+      } else if (expectedTemp > 75) {
+        forecastDemand += (expectedTemp - 75) * 100;
+      }
 
-      forecastRows.push(
-        `${dateOfPrediction},${formatDate(predictedDate)},${config.region},${sourceForecast},MWh,${ENERGY_SOURCES[s]}`
-      );
+      // Forecast error scales with lead time: ~3% base + ~1.5% per day ahead
+      const errorScale = 0.03 + leadTime * 0.015;
+      const forecastError = (forecastRand() - 0.5) * 2 * errorScale * config.baseLoad;
+      forecastDemand += forecastError;
+
+      for (let s = 0; s < ENERGY_SOURCES.length; s++) {
+        const basePercent = config.energyMix[s];
+        const noise = (forecastRand() - 0.5) * 0.03;
+        const sourceForecast = Math.round(forecastDemand * (basePercent + noise));
+
+        forecastRows.push(
+          `${dateOfPrediction},${formatDate(predictedDate)},${config.region},${sourceForecast},MWh,${ENERGY_SOURCES[s]}`
+        );
+      }
     }
   }
 }

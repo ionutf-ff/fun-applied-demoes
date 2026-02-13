@@ -1,6 +1,6 @@
 import type { HistoricalDemand, ForecastedDemand, WeatherData, ChartDataPoint } from '@/types';
 
-const TODAY = '2026-02-13';
+const REAL_TODAY = '2026-02-13';
 
 /**
  * Aggregates demand rows by date, summing values for selected energy sources.
@@ -22,33 +22,34 @@ export function mergeChartData(
   actual: HistoricalDemand[],
   forecast: ForecastedDemand[],
   weather: WeatherData[],
-  selectedSources: string[]
+  selectedSources: string[],
+  primaryDate: string,
+  comparisonDate: string | null
 ): ChartDataPoint[] {
-  // Aggregate actual demand by date (sum selected energy sources)
+  // Historical demand: always up to real today
   const actualByDate = aggregateByDate(
-    actual.map((a) => ({ date: a.date, value: a.value, energySource: a.energySource })),
+    actual.filter((a) => a.date <= REAL_TODAY).map((a) => ({ date: a.date, value: a.value, energySource: a.energySource })),
     selectedSources
   );
 
-  // Get the latest forecast per (predictedDate, energySource) keeping latest dateOfPrediction
-  const latestForecastMap = new Map<string, ForecastedDemand>();
-  for (const f of forecast) {
-    const key = `${f.predictedDate}|${f.energySource}`;
-    const existing = latestForecastMap.get(key);
-    if (!existing || f.dateOfPrediction > existing.dateOfPrediction) {
-      latestForecastMap.set(key, f);
-    }
+  // Primary forecast: dateOfPrediction === primaryDate
+  const primaryForecast = forecast.filter((f) => f.dateOfPrediction === primaryDate);
+  const primaryByDate = aggregateByDate(
+    primaryForecast.map((f) => ({ date: f.predictedDate, value: f.value, energySource: f.energySource })),
+    selectedSources
+  );
+
+  // Comparison forecast (if active)
+  let comparisonByDate: Map<string, number> | null = null;
+  if (comparisonDate) {
+    const compForecast = forecast.filter((f) => f.dateOfPrediction === comparisonDate);
+    comparisonByDate = aggregateByDate(
+      compForecast.map((f) => ({ date: f.predictedDate, value: f.value, energySource: f.energySource })),
+      selectedSources
+    );
   }
 
-  // Aggregate forecasts by date (sum selected energy sources)
-  const forecastByDate = new Map<string, number>();
-  for (const f of latestForecastMap.values()) {
-    if (selectedSources.length > 0 && !selectedSources.includes(f.energySource)) continue;
-    const date = f.predictedDate;
-    forecastByDate.set(date, (forecastByDate.get(date) || 0) + f.value);
-  }
-
-  // Weather by date (one entry per date, no energy source dimension)
+  // Weather by date
   const weatherByDate = new Map<string, WeatherData>();
   for (const w of weather) {
     weatherByDate.set(w.date, w);
@@ -57,35 +58,56 @@ export function mergeChartData(
   // Collect all dates
   const allDates = new Set<string>();
   actualByDate.forEach((_, date) => allDates.add(date));
-  forecastByDate.forEach((_, date) => allDates.add(date));
+  primaryByDate.forEach((_, date) => allDates.add(date));
+  if (comparisonByDate) comparisonByDate.forEach((_, date) => allDates.add(date));
   weatherByDate.forEach((_, date) => allDates.add(date));
 
   const sortedDates = Array.from(allDates).sort();
   const result: ChartDataPoint[] = [];
 
   for (const date of sortedDates) {
-    const isFuture = date > TODAY;
+    const isFuture = date > primaryDate;
     const actualValue = actualByDate.get(date) ?? null;
-    const predictedValue = forecastByDate.get(date) ?? null;
+    const primaryValue = primaryByDate.get(date) ?? null;
+    const compValue = comparisonByDate?.get(date) ?? null;
     const weatherEntry = weatherByDate.get(date);
     const temp = weatherEntry ? weatherEntry.temperature : null;
     const hum = weatherEntry ? weatherEntry.humidity : null;
     const wind = weatherEntry ? weatherEntry.windSpeed : null;
 
+    // Outlier detection:
+    // - Actual vs primary: 10% threshold (all dates)
+    // - Comparison vs primary (past/between dates): 10% threshold (where actual exists)
+    // - Comparison vs primary (future dates, after primaryDate): 5% threshold
     let isOutlier = false;
-    if (actualValue !== null && predictedValue !== null) {
-      const deviation = Math.abs(actualValue - predictedValue) / predictedValue;
-      isOutlier = deviation > 0.1;
+    let comparisonOutlier = false;
+
+    if (primaryValue !== null) {
+      if (actualValue !== null) {
+        const actualDev = Math.abs(actualValue - primaryValue) / primaryValue;
+        if (actualDev > 0.1) isOutlier = true;
+      }
+      if (compValue !== null) {
+        const threshold = isFuture ? 0.05 : 0.1;
+        const compDev = Math.abs(compValue - primaryValue) / primaryValue;
+        if (compDev > threshold) {
+          comparisonOutlier = true;
+        }
+      }
     }
 
     result.push({
       date,
       actual: actualValue,
-      predicted: predictedValue,
-      predictedPast: !isFuture ? predictedValue : null,
-      predictedFuture: isFuture ? predictedValue : null,
-      confidenceHigh: predictedValue !== null ? predictedValue * 1.1 : null,
-      confidenceLow: predictedValue !== null ? predictedValue * 0.9 : null,
+      predicted: primaryValue,
+      predictedPast: !isFuture ? primaryValue : null,
+      predictedFuture: isFuture ? primaryValue : null,
+      confidenceHigh: primaryValue !== null ? primaryValue * 1.1 : null,
+      confidenceLow: primaryValue !== null ? primaryValue * 0.9 : null,
+      comparisonPredicted: compValue,
+      comparisonPredictedPast: !isFuture ? compValue : null,
+      comparisonPredictedFuture: isFuture ? compValue : null,
+      comparisonOutlier,
       isOutlier,
       isFuture,
       temperature: temp,
@@ -100,16 +122,34 @@ export function mergeChartData(
     });
   }
 
-  // Ensure connection at today boundary
-  const todayPoint = result.find((p) => p.date === TODAY);
-  if (todayPoint) {
-    if (todayPoint.predicted !== null) todayPoint.predictedFuture = todayPoint.predicted;
-    if (todayPoint.temperature !== null) todayPoint.temperatureFuture = todayPoint.temperature;
-    if (todayPoint.humidity !== null) todayPoint.humidityFuture = todayPoint.humidity;
-    if (todayPoint.windSpeed !== null) todayPoint.windSpeedFuture = todayPoint.windSpeed;
+  // Ensure connection at the primaryDate boundary
+  const boundaryPoint = result.find((p) => p.date === primaryDate);
+  if (boundaryPoint) {
+    if (boundaryPoint.predicted !== null) boundaryPoint.predictedFuture = boundaryPoint.predicted;
+    if (boundaryPoint.comparisonPredicted !== null) boundaryPoint.comparisonPredictedFuture = boundaryPoint.comparisonPredicted;
+    if (boundaryPoint.temperature !== null) boundaryPoint.temperatureFuture = boundaryPoint.temperature;
+    if (boundaryPoint.humidity !== null) boundaryPoint.humidityFuture = boundaryPoint.humidity;
+    if (boundaryPoint.windSpeed !== null) boundaryPoint.windSpeedFuture = boundaryPoint.windSpeed;
   }
 
   return result;
+}
+
+/**
+ * Compute a fixed Y-axis domain from actual + primary forecast values.
+ * Excludes comparison values so the domain stays stable when the comparison slider moves.
+ */
+export function computeYDomain(data: ChartDataPoint[]): [number, number] {
+  const values: number[] = [];
+  for (const d of data) {
+    if (d.actual !== null) values.push(d.actual);
+    if (d.predicted !== null) values.push(d.predicted);
+  }
+  if (values.length === 0) return [0, 100000];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const padding = (max - min) * 0.08;
+  return [Math.floor(min - padding), Math.ceil(max + padding)];
 }
 
 export function computeErrorMetrics(data: ChartDataPoint[]): {

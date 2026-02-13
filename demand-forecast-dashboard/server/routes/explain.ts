@@ -4,7 +4,7 @@ import { generateMockExplanation } from '../services/aiExplainer.js';
 export const explainRouter = Router();
 
 explainRouter.post('/explain', async (req, res) => {
-  const { date, actual, predicted, state, temperature } = req.body;
+  const { date, actual, predicted, state, temperature, isComparisonPoint, comparisonPredicted, daysDifference } = req.body;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -16,6 +16,9 @@ explainRouter.post('/explain', async (req, res) => {
     predicted,
     state,
     temperature,
+    isComparisonPoint,
+    comparisonPredicted,
+    daysDifference,
   });
 
   for (const chunk of chunks) {
